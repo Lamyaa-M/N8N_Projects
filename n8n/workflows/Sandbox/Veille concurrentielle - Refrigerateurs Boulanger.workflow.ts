@@ -107,31 +107,21 @@ const collecter_les_refrigerateurs = node({
   version: 1,
   config: {
     name: 'Collecter les refrigerateurs (Firecrawl)',
-    notes: "Spec section 4: le crawl parcourt les differentes pages de la categorie refrigerateurs. Pas de limite artificially imposee : limit est fixe au dessus du nombre d articles annonces par Boulanger (1041) pour que rien ne soit tronque. ATTENTION: les options Firecrawl doivent etre imbriquees dans scrapeOptions.options, sinon le format json n est jamais demande et la reponse ne contient que le markdown. En cas de collecte vide, verifier d abord que formats est bien sous options.",
+    notes: "Spec section 4 : la page categorie de Boulanger contient les fiches produits (nom, marque, prix, remise) et se charge progressivement, d ou les cycles de defilement. ATTENTION : le noeud Firecrawl n expose ni crawlEntireDomain ni maxDiscoveryDepth, et ses includePaths sont des regex RE2 (un glob comme /ref/* est rejete en 400). On scrape donc la page categorie plutot que de crawler : le crawl ne suivait pas les liens /ref/, qui sont des chemins freres et non enfants de /c/refrigerateur. En cas de collecte vide, verifier que formats est bien sous scrapeOptions.options.",
     notesInFlow: true,
     parameters: {
-      resource: 'Crawling',
-      operation: 'crawl',
+      resource: 'Scraping',
+      operation: 'scrape',
       url: 'https://www.boulanger.com/c/refrigerateur',
-      limit: 1200,
-      maxConcurrency: 15,
-      delay: 200,
-      includePaths: { items: [{ path: '*/c/refrigerateur*' }, { path: '*/ref/*' }] },
-      excludePaths: { items: [] },
-      crawlOptions: {
-        ignoreSitemap: false,
-        allowExternalLinks: false,
-        allowSubdomains: false,
-        scrapeOptions: {
-          options: {
-            formats: { format: [{ type: 'json', prompt: PROMPT_EXTRACTION, schema: SCHEMA_PRODUITS }] },
-            onlyMainContent: true,
-            blockAds: true,
-            waitFor: 5000,
-            storeInCache: false,
-            timeout: 120000,
-            actions: ACTIONS_CHARGEMENT
-          }
+      scrapeOptions: {
+        options: {
+          formats: { format: [{ type: 'json', prompt: PROMPT_EXTRACTION, schema: SCHEMA_PRODUITS }] },
+          onlyMainContent: true,
+          blockAds: true,
+          waitFor: 5000,
+          storeInCache: false,
+          timeout: 180000,
+          actions: ACTIONS_CHARGEMENT
         }
       },
       requestOptions: {}
