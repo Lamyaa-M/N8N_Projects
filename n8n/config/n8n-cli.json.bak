@@ -1,0 +1,12 @@
+{
+  "env": "prod",
+  "localDir": "n8n",
+  "projectId": "personal",
+  "projectName": "Personal",
+  "references": [
+    {
+      "name": "Workflow Examples Ref",
+      "builtin": "examples"
+    }
+  ]
+}
