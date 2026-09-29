@@ -1,7 +1,7 @@
 const chaque_lundi_06_00 = trigger({
   type: 'n8n-nodes-base.scheduleTrigger',
   version: 1.4,
-  config: { name: 'Chaque lundi 06:00', parameters: { rule: { interval: [{ field: 'weeks', triggerAtDay: [1], triggerAtHour: 6 }] } }, position: [0, 96] }
+  config: { name: 'Chaque lundi 06:00', parameters: { rule: { interval: [{ field: 'weeks', triggerAtDay: [1], triggerAtHour: 6 }] } }, position: [0, 96], disabled: true }
 });
 
 const lister_les_pages_a_collecter = node({
@@ -13,7 +13,7 @@ const lister_les_pages_a_collecter = node({
 const collecter_les_pages_Firecrawl_rawHtml = node({
   type: '@mendable/n8n-nodes-firecrawl.firecrawl',
   version: 1,
-  config: { name: 'Collecter les pages (Firecrawl rawHtml)', parameters: { resource: 'Scraping', operation: 'scrape', url: expr('{{ $json.url }}'), scrapeOptions: { options: { formats: { format: [{ type: 'rawHtml' }] }, onlyMainContent: false, blockAds: true, waitFor: 3000, storeInCache: false, timeout: 120000 } }, requestOptions: {} }, position: [448, 96], notes: 'Boulanger refuse les requetes HTTP directes depuis les serveurs n8n Cloud : la connexion est interrompue par le filtrage anti-bot sur IP de datacenter. Firecrawl sait recuperer la page, on ne lui demande donc que le HTML brut via le format rawHtml, sans aucune extraction par modele de langage : l extraction est faite de maniere deterministe par le noeud suivant. ATTENTION : formats doit rester sous scrapeOptions.options, sinon la reponse ne contient pas rawHtml.', notesInFlow: true, onError: 'continueErrorOutput' }
+  config: { name: 'Collecter les pages (Firecrawl rawHtml)', parameters: { operation: 'scrape', url: expr('{{ $json.url }}'), scrapeOptions: { options: { formats: { format: [{ type: 'rawHtml' }] }, headers: {}, onlyMainContent: false, storeInCache: false, timeout: 120000, waitFor: 3000 } }, requestOptions: {} }, position: [448, 96], notes: 'Boulanger refuse les requetes HTTP directes depuis les serveurs n8n Cloud : la connexion est interrompue par le filtrage anti-bot sur IP de datacenter. Firecrawl sait recuperer la page, on ne lui demande donc que le HTML brut via le format rawHtml, sans aucune extraction par modele de langage : l extraction est faite de maniere deterministe par le noeud suivant. ATTENTION : formats doit rester sous scrapeOptions.options, sinon la reponse ne contient pas rawHtml.', notesInFlow: true, onError: 'continueErrorOutput' }
 });
 
 const analyser_les_produits = node({
@@ -31,7 +31,7 @@ const la_collecte_est_elle_exploitable = node({
 const lire_historique_Data_Table = node({
   type: 'n8n-nodes-base.dataTable',
   version: 1.1,
-  config: { name: 'Lire historique (Data Table)', parameters: { resource: 'row', operation: 'get', dataTableId: { __rl: true, mode: 'name', value: 'veille_refrigerateurs' }, matchType: 'allConditions', filters: { conditions: [{ keyName: 'date_collecte', condition: 'neq', keyValue: expr('{{ $json.dateCollecte }}') }] }, returnAll: true }, position: [1120, 0], notes: 'Recupere toutes les collectes anterieures a la date du jour. Le filtre neq evite de relire l historique integral et de se melanger avec la collecte du jour.', notesInFlow: true }
+  config: { name: 'Lire historique (Data Table)', parameters: { operation: 'get', dataTableId: { __rl: true, mode: 'name', value: 'veille_refrigerateurs' }, matchType: 'allConditions', filters: { conditions: [{ keyName: 'date_collecte', condition: 'neq', keyValue: expr('{{ $json.dateCollecte }}') }] }, returnAll: true }, position: [1120, 0], notes: 'Recupere toutes les collectes anterieures a la date du jour. Le filtre neq evite de relire l historique integral et de se melanger avec la collecte du jour.', notesInFlow: true }
 });
 
 const comparer_avec_la_semaine_precedente = node({
@@ -49,7 +49,7 @@ const statistiques_par_marque = node({
 const analyse_IA = node({
   type: '@n8n/n8n-nodes-langchain.openAi',
   version: 1.3,
-  config: { name: 'Analyse IA', parameters: { modelId: { __rl: true, mode: 'list', value: 'gpt-4o-mini' }, messages: { values: [{ role: 'system', content: 'Tu es analyste de veille concurrentielle pour des refrigerateurs en France. Regles absolues : 1) tu n inventes AUCUN chiffre, AUCUNE marque et AUCUN produit qui ne figure pas dans les donnees fournies ; 2) si une information manque, tu ecris exactement "donnee non disponible" ; 3) tu ne fais aucune supposition sur l evolution des prix ; 4) tu reponds en francais, de facon concise et factuelle, en 4 a 6 phrases ; 5) tu ne commentes que les donnees presentes.' }, { role: 'user', content: expr('Statistiques par marque de la semaine : {{ JSON.stringify($json.stats) }}. Comparaison avec la collecte precedente du {{ $json.semainePrecedente || "aucune" }} : {{ JSON.stringify({ nouveaux: $json.nouveaux, disparus: $json.disparus, changements: $json.changements, nouvellesPromos: $json.nouvellesPromos, promosTerminees: $json.promosTerminees }) }}. Statut de la collecte : {{ $json.statut }}. Total produits : {{ $json.totalProduits }}. Redige l analyse en te basant strictement sur ces donnees.') }] }, options: {} }, position: [1792, -96], notes: 'Regle 6 de la spec : l IA analyse les donnees mais ne les invente pas. Le prompt impose de ne citer que des chiffres presents dans le JSON.', notesInFlow: true }
+  config: { name: 'Analyse IA', parameters: { modelId: { __rl: true, mode: 'list', value: 'gpt-4o-mini' }, messages: { values: [{ content: 'Tu es analyste de veille concurrentielle pour des refrigerateurs en France. Regles absolues : 1) tu n inventes AUCUN chiffre, AUCUNE marque et AUCUN produit qui ne figure pas dans les donnees fournies ; 2) si une information manque, tu ecris exactement "donnee non disponible" ; 3) tu ne fais aucune supposition sur l evolution des prix ; 4) tu reponds en francais, de facon concise et factuelle, en 4 a 6 phrases ; 5) tu ne commentes que les donnees presentes.', role: 'system' }, { content: expr('Statistiques par marque de la semaine : {{ JSON.stringify($json.stats) }}. Comparaison avec la collecte precedente du {{ $json.semainePrecedente || "aucune" }} : {{ JSON.stringify({ nouveaux: $json.nouveaux, disparus: $json.disparus, changements: $json.changements, nouvellesPromos: $json.nouvellesPromos, promosTerminees: $json.promosTerminees }) }}. Statut de la collecte : {{ $json.statut }}. Total produits : {{ $json.totalProduits }}. Redige l analyse en te basant strictement sur ces donnees.') }] }, options: {} }, position: [1792, -96], notes: 'Regle 6 de la spec : l IA analyse les donnees mais ne les invente pas. Le prompt impose de ne citer que des chiffres presents dans le JSON.', notesInFlow: true }
 });
 
 const construire_le_mail = node({
@@ -73,7 +73,7 @@ const preparer_les_lignes = node({
 const enregistrer_la_collecte_Data_Table = node({
   type: 'n8n-nodes-base.dataTable',
   version: 1.1,
-  config: { name: 'Enregistrer la collecte (Data Table)', parameters: { resource: 'row', operation: 'insert', dataTableId: { __rl: true, mode: 'name', value: 'veille_refrigerateurs' }, columns: { mappingMode: 'defineBelow', value: { date_collecte: expr('{{ $json.date_collecte }}'), enseigne: expr('{{ $json.enseigne }}'), marque: expr('{{ $json.marque }}'), nom_produit: expr('{{ $json.nom_produit }}'), reference: expr('{{ $json.reference }}'), prix_actuel: expr('{{ $json.prix_actuel }}'), ancien_prix: expr('{{ $json.ancien_prix }}'), reduction: expr('{{ $json.reduction }}'), en_promotion: expr('{{ $json.en_promotion }}'), url: expr('{{ $json.url }}'), statut_collecte: expr('{{ $json.statut_collecte }}') } }, options: { optimizeBulk: true } }, position: [1792, 160] }
+  config: { name: 'Enregistrer la collecte (Data Table)', parameters: { dataTableId: { __rl: true, mode: 'name', value: 'veille_refrigerateurs' }, columns: { mappingMode: 'defineBelow', value: { date_collecte: expr('{{ $json.date_collecte }}'), enseigne: expr('{{ $json.enseigne }}'), marque: expr('{{ $json.marque }}'), nom_produit: expr('{{ $json.nom_produit }}'), reference: expr('{{ $json.reference }}'), prix_actuel: expr('{{ $json.prix_actuel }}'), ancien_prix: expr('{{ $json.ancien_prix }}'), reduction: expr('{{ $json.reduction }}'), en_promotion: expr('{{ $json.en_promotion }}'), url: expr('{{ $json.url }}'), statut_collecte: expr('{{ $json.statut_collecte }}') } }, options: { optimizeBulk: true } }, position: [1792, 160] }
 });
 
 const preparer_la_trace_d_echec = node({
@@ -85,7 +85,7 @@ const preparer_la_trace_d_echec = node({
 const enregistrer_l_echec_Data_Table = node({
   type: 'n8n-nodes-base.dataTable',
   version: 1.1,
-  config: { name: 'Enregistrer l echec (Data Table)', parameters: { resource: 'row', operation: 'insert', dataTableId: { __rl: true, mode: 'name', value: 'veille_refrigerateurs' }, columns: { mappingMode: 'defineBelow', value: { date_collecte: expr('{{ $json.date_collecte }}'), enseigne: expr('{{ $json.enseigne }}'), marque: expr('{{ $json.marque }}'), nom_produit: expr('{{ $json.nom_produit }}'), reference: expr('{{ $json.reference }}'), prix_actuel: expr('{{ $json.prix_actuel }}'), ancien_prix: expr('{{ $json.ancien_prix }}'), reduction: expr('{{ $json.reduction }}'), en_promotion: expr('{{ $json.en_promotion }}'), url: expr('{{ $json.url }}'), statut_collecte: expr('{{ $json.statut_collecte }}') } }, options: { optimizeBulk: true } }, position: [1344, 208] }
+  config: { name: 'Enregistrer l echec (Data Table)', parameters: { dataTableId: { __rl: true, mode: 'name', value: 'veille_refrigerateurs' }, columns: { mappingMode: 'defineBelow', value: { date_collecte: expr('{{ $json.date_collecte }}'), enseigne: expr('{{ $json.enseigne }}'), marque: expr('{{ $json.marque }}'), nom_produit: expr('{{ $json.nom_produit }}'), reference: expr('{{ $json.reference }}'), prix_actuel: expr('{{ $json.prix_actuel }}'), ancien_prix: expr('{{ $json.ancien_prix }}'), reduction: expr('{{ $json.reduction }}'), en_promotion: expr('{{ $json.en_promotion }}'), url: expr('{{ $json.url }}'), statut_collecte: expr('{{ $json.statut_collecte }}') } }, options: { optimizeBulk: true } }, position: [1344, 208] }
 });
 
 const declenchement_manuel = trigger({
