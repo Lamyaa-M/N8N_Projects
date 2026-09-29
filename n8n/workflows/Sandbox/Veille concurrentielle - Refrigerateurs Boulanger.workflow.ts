@@ -1,4 +1,4 @@
-const PROMPT_EXTRACTION = "Tu analyses des pages de vente de refrigerateurs du site Boulanger (https://www.boulanger.com). Pour chaque fiche produit visible sur la page, retourne un objet avec : marque (constructeur, ex: Samsung, Bosch, Whirlpool), nomProduit (libelle commercial exact), reference (reference fabricant si visible), prixActuel (nombre), ancienPrix (nombre, uniquement si un prix barre est affiche), reduction (nombre, uniquement si un pourcentage est explicitement affiche), enPromotion (boolean), url (lien produit absolu commencant par https://www.boulanger.com/ref/ si la page est une fiche produit, sinon null). Regles de prix : les prix apparaissent comme 1849,00 EUR avec une virgule decimale, convertis toujours en nombre avec un point decimal. Ignore les mentions de paiement mensuel (ex: des 108,40 EUR /mois en 20x). ancienPrix ne doit venir que d un prix barre. reduction uniquement si un pourcentage est affiche. enPromotion true uniquement si un badge promo ou un prix barre est present. Si une information n est pas visible sur la page, mets null. N invente jamais, n extrapole jamais, ne complete jamais une information manquante. Ignore tout ce qui n est pas un produit : navigation, filtres, listes de marques, bandeaux, publicites, services. Si aucune fiche produit n est presente, retourne un tableau products vide.";
+const PROMPT_EXTRACTION = "Tu analyses le markdown de la page categorie refrigerateurs du site Boulanger. Sur cette page, chaque fiche produit apparait sous la forme suivante : une image liee vers https://www.boulanger.com/ref/NUMERO, puis un lien de marque vers https://www.boulanger.com/marque/NOMMARQUE, puis le nom du produit en lien gras vers la meme URL /ref/, puis un avis, puis un bloc de prix. Pour chaque fiche, retourne un objet avec : marque (le nom de marque contenu dans le lien /marque/, par exemple samsung, bosch, smeg ; si aucun lien de marque n est present, mets null), nomProduit (le libelle commercial exact du produit), reference (le NUMERO de l URL /ref/, par exemple 8011978, en chaine), prixActuel (nombre, le prix de vente actuel), ancienPrix (nombre, uniquement le prix barre s il est affiche), reduction (nombre, le pourcentage ecrit sous la forme -14% dans la page, en valeur positive), enPromotion (boolean), url (le lien absolu https://www.boulanger.com/ref/NUMERO). Regles de prix : les prix sont ecrits comme 699,00 EUR avec une virgule decimale et le symbole euro ; convertis toujours en nombre avec un point decimal. Quand deux prix apparaissent sur une meme fiche, le plus petit est le prix actuel et le plus grand est l ancien prix barre. Ignore les montants de paiement mensuel (ex: 10,94 EUR /mois). Ignore tout ce qui n est pas une fiche produit : le bandeau 10 EUR offerts, les liens de filtres et de marques du menu, le bouton Afficher les N resultats, les services, Revendre votre appareil, Comparer, les logos, les notes et les avis. Si une information n est pas presente dans le texte, mets null. N invente jamais, n extrapole jamais, ne complete jamais une information manquante et ne reporte jamais une information d une autre fiche. Si aucune fiche produit n est presente, retourne un tableau products vide.";
 
 const SCHEMA_PRODUITS = {
   type: 'object',
@@ -46,6 +46,56 @@ const chaque_lundi_06_00 = trigger({
   config: { name: 'Chaque lundi 06:00', parameters: { rule: { interval: [{ field: 'weeks', triggerAtDay: [1], triggerAtHour: 6 }] } }, position: [0, 0] }
 });
 
+// La page categorie de Boulanger charge les produits progressivement : sans defilement,
+// seuls les premieres fiches apparaissent. On alterne defilement et attente pour declencher
+// le chargement Differé. Le bouton Afficher les N resultats exigerait un selecteur CSS que
+// l on ne peut pas deduire du markdown, le defilement est donc la seule option sans selecteur.
+const ACTIONS_CHARGEMENT = {
+  items: [
+    { type: 'wait', milliseconds: 4000 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 },
+    { type: 'scroll', direction: 'down' },
+    { type: 'wait', milliseconds: 1500 }
+  ]
+};
+
 const declenchement_manuel = trigger({
   type: 'n8n-nodes-base.manualTrigger',
   version: 1,
@@ -66,7 +116,7 @@ const collecter_les_refrigerateurs = node({
       limit: 1200,
       maxConcurrency: 15,
       delay: 200,
-      includePaths: { items: [{ path: '/c/refrigerateur*' }, { path: '/ref/*' }] },
+      includePaths: { items: [{ path: '*/c/refrigerateur*' }, { path: '*/ref/*' }] },
       excludePaths: { items: [] },
       crawlOptions: {
         ignoreSitemap: false,
@@ -77,9 +127,10 @@ const collecter_les_refrigerateurs = node({
             formats: { format: [{ type: 'json', prompt: PROMPT_EXTRACTION, schema: SCHEMA_PRODUITS }] },
             onlyMainContent: true,
             blockAds: true,
-            waitFor: 3000,
+            waitFor: 5000,
             storeInCache: false,
-            timeout: 60000
+            timeout: 120000,
+            actions: ACTIONS_CHARGEMENT
           }
         }
       },
@@ -99,7 +150,7 @@ const normaliser_et_controler = node({
     notes: "Extrait les produits de la reponse Firecrawl. La forme observee est { success, data } ou data contient un objet par page crawl, chaque page portant l extraction structurée dans page.json. Si une page est recuperee mais sans extraction json, elle est comptee en page en echec pour que le statut devienne partiel et non complet.",
     notesInFlow: true,
     parameters: {
-      jsCode: "const dateCollecte = new Date().toISOString().slice(0, 10);\n\nconst erreurs = [];\nconst produitsExtraits = [];\nconst urls vues = new Set();\nlet pagesOk = 0;\nlet pagesEchouees = 0;\nlet pagesSansExtraction = 0;\n\nfunction nombre(v) { return typeof v === 'number' && isFinite(v) ? v : null; }\nfunction texte(v) { return v === null || v === undefined ? '' : String(v).trim(); }\n\n// Firecrawl renvoie { success, data } avec data soit une page unique, soit un tableau de pages.\n// Chaque page peut porter l extraction structurée dans page.json.\nfor (const item of $input.all()) {\n  const enveloppe = item.json;\n  if (!enveloppe) continue;\n  if (enveloppe.error) { pagesEchouees += 1; erreurs.push(String(enveloppe.error).slice(0, 300)); continue; }\n\n  const pages = Array.isArray(enveloppe.data) ? enveloppe.data : [enveloppe.data];\n  for (const page of pages) {\n    if (!page || typeof page !== 'object') { pagesEchouees += 1; continue; }\n    const extraction = page.json;\n    if (!extraction || !Array.isArray(extraction.products)) {\n      // Page bien recuperee mais extraction absente : c est un echec partiel, pas une page ok.\n      pagesSansExtraction += 1;\n      pagesEchouees += 1;\n      const src = (page.metadata && page.metadata.sourceURL) || 'source inconnue';\n      erreurs.push('Extraction JSON absente pour ' + src);\n      continue;\n    }\n    pagesOk += 1;\n    for (const p of extraction.products) {\n      if (!p || typeof p !== 'object') continue;\n      const url = texte(p.url);\n      if (url) {\n        if (vues.has(url)) continue;\n        vues.add(url);\n      }\n      const nomProduit = texte(p.nomProduit);\n      if (!nomProduit && !url && nombre(p.prixActuel) === null) continue;\n      const prixActuel = nombre(p.prixActuel);\n      const ancienPrix = nombre(p.ancienPrix);\n      let reduction = nombre(p.reduction);\n      if (reduction === null && prixActuel !== null && ancienPrix !== null && ancienPrix > prixActuel && ancienPrix > 0) {\n        reduction = Math.round(((ancienPrix - prixActuel) / ancienPrix) * 1000) / 10;\n      }\n      produitsExtraits.push({\n        marque: texte(p.marque) || 'Marque inconnue',\n        nomProduit: nomProduit,\n        reference: texte(p.reference),\n        prixActuel: prixActuel,\n        ancienPrix: ancienPrix,\n        reduction: reduction,\n        enPromotion: p.enPromotion === true || (reduction !== null && reduction > 0),\n        url: url\n      });\n    }\n  }\n}\n\n// Section 7 de la spec: le statut ne repose que sur des faits constates.\nlet statut = 'Echec';\nif (produitsExtraits.length > 0 && pagesEchouees === 0) statut = 'Collecte complete';\nelse if (produitsExtraits.length > 0) statut = 'Collecte partielle';\n\nreturn [{ json: {\n  dateCollecte: dateCollecte,\n  enseigne: 'Boulanger',\n  produits: produitsExtraits,\n  statut: statut,\n  pagesOk: pagesOk,\n  pagesEchouees: pagesEchouees,\n  pagesSansExtraction: pagesSansExtraction,\n  erreurs: erreurs.slice(0, 20)\n} }];"
+      jsCode: "const dateCollecte = new Date().toISOString().slice(0, 10);\n\nconst erreurs = [];\nconst produitsExtraits = [];\nconst urlsVues = new Set();\nlet pagesOk = 0;\nlet pagesEchouees = 0;\nlet pagesSansExtraction = 0;\nlet totalAnnonce = null;\n\nfunction nombre(v) { return typeof v === 'number' && isFinite(v) ? v : null; }\nfunction texte(v) { return v === null || v === undefined ? '' : String(v).trim(); }\n\n// Firecrawl renvoie { success, data } avec data soit une page unique, soit un tableau de pages.\n// Chaque page peut porter l extraction structurée dans page.json.\nfor (const item of $input.all()) {\n  const enveloppe = item.json;\n  if (!enveloppe) continue;\n  if (enveloppe.error) { pagesEchouees += 1; erreurs.push(String(enveloppe.error).slice(0, 300)); continue; }\n\n  const pages = Array.isArray(enveloppe.data) ? enveloppe.data : [enveloppe.data];\n  for (const page of pages) {\n    if (!page || typeof page !== 'object') { pagesEchouees += 1; continue; }\n    // Boulanger annonce le total sur la page. On le releve pour juger de la completude :\n    // sans cette comparaison, une collecte partielle passerait pour une collecte complete.\n    const mdPage = page.markdown || (page.data && page.data.markdown) || '';\n    const annonce = mdPage.match(/(\\d[\\d\\s.,]*)\\s*(?:r\\u00e9sultats|articles|produits)/i);\n    if (annonce) {\n      const v = parseInt(annonce[1].replace(/[\\s.,]/g, ''), 10);\n      if (Number.isFinite(v) && v > 0 && (totalAnnonce === null || v > totalAnnonce)) totalAnnonce = v;\n    }\n    const extraction = page.json;\n    if (!extraction || !Array.isArray(extraction.products)) {\n      // Page bien recuperee mais extraction absente : c est un echec partiel, pas une page ok.\n      pagesSansExtraction += 1;\n      pagesEchouees += 1;\n      const src = (page.metadata && page.metadata.sourceURL) || 'source inconnue';\n      erreurs.push('Extraction JSON absente pour ' + src);\n      continue;\n    }\n    pagesOk += 1;\n    for (const p of extraction.products) {\n      if (!p || typeof p !== 'object') continue;\n      const url = texte(p.url);\n      if (url) {\n        if (urlsVues.has(url)) continue;\n        urlsVues.add(url);\n      }\n      const nomProduit = texte(p.nomProduit);\n      if (!nomProduit && !url && nombre(p.prixActuel) === null) continue;\n      const prixActuel = nombre(p.prixActuel);\n      const ancienPrix = nombre(p.ancienPrix);\n      let reduction = nombre(p.reduction);\n      if (reduction === null && prixActuel !== null && ancienPrix !== null && ancienPrix > prixActuel && ancienPrix > 0) {\n        reduction = Math.round(((ancienPrix - prixActuel) / ancienPrix) * 1000) / 10;\n      }\n      produitsExtraits.push({\n        marque: texte(p.marque) || 'Marque inconnue',\n        nomProduit: nomProduit,\n        reference: texte(p.reference),\n        prixActuel: prixActuel,\n        ancienPrix: ancienPrix,\n        reduction: reduction,\n        enPromotion: p.enPromotion === true || (reduction !== null && reduction > 0),\n        url: url\n      });\n    }\n  }\n}\n\n// Section 7 de la spec: une collecte partielle ne doit jamais etre presentee comme complete.\n// Le total annonce par le site est le seul juge credible de la completude.\nlet statut = 'Echec';\nif (produitsExtraits.length > 0) {\n  const complet = pagesEchouees === 0 && (totalAnnonce === null || produitsExtraits.length >= totalAnnonce);\n  statut = complet ? 'Collecte complete' : 'Collecte partielle';\n  if (totalAnnonce !== null && produitsExtraits.length < totalAnnonce) {\n    erreurs.push('Couverture incomplete : ' + produitsExtraits.length + ' produits recuperes sur ' + totalAnnonce + ' annonces par le site.');\n  }\n}\n\nreturn [{ json: {\n  dateCollecte: dateCollecte,\n  enseigne: 'Boulanger',\n  produits: produitsExtraits,\n  statut: statut,\n  pagesOk: pagesOk,\n  pagesEchouees: pagesEchouees,\n  pagesSansExtraction: pagesSansExtraction,\n  totalAnnonce: totalAnnonce,\n  erreurs: erreurs.slice(0, 20)\n} }];"
     },
     position: [448, 0],
     executeOnce: true
