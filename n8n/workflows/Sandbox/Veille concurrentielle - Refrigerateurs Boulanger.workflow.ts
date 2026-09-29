@@ -57,15 +57,15 @@ const collecter_les_refrigerateurs = node({
   version: 1,
   config: {
     name: 'Collecter les refrigerateurs (Firecrawl)',
-    notes: "Spec section 4: le crawl parcourt les differentes pages de la categorie refrigerateurs. ATTENTION: les options Firecrawl doivent etre imbriquees dans scrapeOptions.options, sinon le format json n est jamais demande et la reponse ne contient que le markdown. En cas de collecte vide, verifier d abord que formats est bien sous options.",
+    notes: "Spec section 4: le crawl parcourt les differentes pages de la categorie refrigerateurs. Pas de limite artificially imposee : limit est fixe au dessus du nombre d articles annonces par Boulanger (1041) pour que rien ne soit tronque. ATTENTION: les options Firecrawl doivent etre imbriquees dans scrapeOptions.options, sinon le format json n est jamais demande et la reponse ne contient que le markdown. En cas de collecte vide, verifier d abord que formats est bien sous options.",
     notesInFlow: true,
     parameters: {
       resource: 'Crawling',
       operation: 'crawl',
       url: 'https://www.boulanger.com/c/refrigerateur',
-      limit: 60,
-      maxConcurrency: 5,
-      delay: 1000,
+      limit: 1200,
+      maxConcurrency: 15,
+      delay: 200,
       includePaths: { items: [{ path: '/c/refrigerateur*' }, { path: '/ref/*' }] },
       excludePaths: { items: [] },
       crawlOptions: {
