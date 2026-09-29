@@ -46,6 +46,12 @@ const chaque_lundi_06_00 = trigger({
   config: { name: 'Chaque lundi 06:00', parameters: { rule: { interval: [{ field: 'weeks', triggerAtDay: [1], triggerAtHour: 6 }] } }, position: [0, 0] }
 });
 
+const declenchement_manuel = trigger({
+  type: 'n8n-nodes-base.manualTrigger',
+  version: 1,
+  config: { name: 'Declenchement manuel', notes: 'Declencheur de test. Un scheduleTrigger ne peut pas etre execute manuellement depuis l API, ce noeud permet de lancer la collecte a la demande et de verifier le resultat avant le lundi.', notesInFlow: true, position: [0, 240] }
+});
+
 const collecter_les_refrigerateurs = node({
   type: '@mendable/n8n-nodes-firecrawl.firecrawl',
   version: 1,
@@ -322,4 +328,5 @@ export default wf
             .to(enregistrer_la_collecte)
         ])))
     .onFalse(enregistrer_les_erreurs
-      .to(enregistrer_echec_dans_la_base)));
+      .to(enregistrer_echec_dans_la_base)))
+  .add(declenchement_manuel.to(collecter_les_refrigerateurs));
