@@ -8,8 +8,7 @@ comparaison avec la semaine précédente, analyse et rapport par e-mail.
 
 ## Objectif du projet
 
-Suivre d'un bout en bout l'offre et la politique tarifaire d'une enseigne
-concurente sur une catégorie de produits, de manière automatique et vérifiable.
+Suivre chaque semaine les offres présentes sur les sites des distributeurs, de manière automatique et vérifiable.
 
 Chaque semaine, le système :
 
