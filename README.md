@@ -124,20 +124,19 @@ Gmail est déjà rattaché via le credential `Gmail account`.
 
 ## Arborescence
 
+Ce dépôt ne contient qu'un workflow.
+
 ```
 n8n/
   config/
-    n8n-cli.json          configuration de synchronisation
+    n8n-cli.json          configuration de synchronisation avec n8n
     n8n-layout.json       position des nœuds sur le canvas
-    n8n-standards.json    conventions de nommage
   workflows/
     Sandbox/
       Veille concurrentielle - Refrigerateurs Boulanger.workflow.ts
-      Exercice 1.workflow.ts
-      Exercice2.workflow.ts
-      WorkflowTest.workflow.ts
-.agents/skills/n8n/       règles du SDK n8n utilisées pour écrire ces workflows
+README.md
 ```
 
 Non versionnés : `.env`, `n8n/config/sync-state.json`, `n8n/config/cache/`,
-`n8n/references/`. Aucun secret ne figure dans le dépôt.
+`n8n/references/`. Aucun secret ne figure dans le dépôt : les credentials
+n8n vivent dans `~/.n8ncli-global.json` et dans l'instance.
