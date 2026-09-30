@@ -1,7 +1,13 @@
-
 # n8ncli ignored files
 .env
 n8n/config/sync-state.json
 n8n/config/unconfigured-credentials.json
 n8n/config/workflow-folders.json
 n8n/references/
+
+# Cache local du CLI : copie de la derniere version synchronisee de chaque
+# workflow. Regenerable avec "n8ncli pull", sans valeur dans un depot partage.
+n8n/config/cache/
+
+# Sauvegardes de configuration
+*.bak
