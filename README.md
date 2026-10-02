@@ -197,52 +197,52 @@ A creer dans l'interface, jamais versionnes :
 
 # 2. Livre_Sport Marketing — Questions sur un PDF
 
-Workflow `WBdTgHm5xuhZqWrF`, **non publie**. Il pose des questions sur un livre
+Workflow `WBdTgHm5xuhZqWrF`, **publie**. Il pose des questions sur un livre
 PDF depose par formulaire et n'y repond qu'a partir du livre. Le magasin de
 vecteurs est **Supabase** (Postgres + pgvector), donc le livre survit a un
 redemarrage de l'instance.
 
-18 noeuds, aucun sous-noeud, aucun outil, aucun agent, aucun Qdrant.
+<https://lamyaamarzouq.app.n8n.cloud/workflow/WBdTgHm5xuhZqWrF>
+
+15 noeuds, dont 2 noeuds Code. Aucun sous-noeud, aucun outil, aucun agent,
+aucun Qdrant.
 
 ## Les trois entrees
 
 ```
 1. Depot du PDF
-On form submission
-  → Extract from File          operation pdf
-  → Chunking                   Code, 800 tokens, recouvrement 150
-  → Limit                      maxItems 4
-  → Call 'Livre_Sport Marketing'   Execute Workflow, workflowId WBdTgHm5xuhZqWrF
+On form submission                  formTrigger, reponse sur le dernier noeud
+  -> Extract from File              operation pdf
+  -> Chunking                       Code, 800 tokens, recouvrement 150, par page
+  -> Limit                          maxItems 10
+  -> Call 'Livre_Sport Marketing'   Execute Workflow, workflowId WBdTgHm5xuhZqWrF
 
 2. Indexation, atteinte par l'appel ci-dessus
-When Executed by Another Workflow
-  → Embed the chunks           HTTP, batchEmbedContents, un seul appel
-  → Pair texts and vectors     Code, associe texte et vecteur
-  → Store in Supabase          table livres, une ligne par passage
+When Executed by Another Workflow   inputSource passthrough
+  -> Embed the chunks               HTTP, embedContent, un appel par passage
+  -> Store in Supabase              table livres, une ligne par passage
 
 3. Question
 When chat message received
-  → Read the question          Code, lit question ou chatInput
-  → Embed the question         HTTP, embedContent
-  → Build the search           Code, construit l'appel a match_livres
-  → Find relevant passages     Postgres, cosine via match_livres
-  → Draft the answer           Code, prompt limite aux passages
-  → Ask Gemini                 gemini-3.5-flash-lite, temperature 0.2
-  → Reply in chat              Code, texte brut
+  -> Embed the question             HTTP, embedContent
+  -> Find relevant passages         Postgres, cosine via match_livres, alwaysOutputData
+  -> Draft the answer               Code, prompt par blocs, filtre les lignes sans texte
+  -> Ask Gemini                     googleGemini, gemini-3.5-flash-lite, temperature 0.2
+  -> Answer for the chat            Edit Fields, une affectation : output
 
-Isole : Clear previous book    Postgres, delete from livres
+Isole : Clear previous book         Postgres, delete from livres
 ```
 
 **Le workflow s'appelle lui-meme.** `Call 'Livre_Sport Marketing'` vise
 `WBdTgHm5xuhZqWrF`, c'est-a-dire son propre identifiant : l'appel sert
 d'aiguiller l'execution vers l'entree 2 plutot que de dupliquer la chaine
-d'indexation dans un second workflow. Les noeuds de l'entree 2 lisent donc leurs
-passages par nom, `$('When Executed by Another Workflow').all()`, et non par
-`$input`, puisque `$input` y est la reponse de Gemini.
+d'indexation dans un second workflow.
 
-**`Clear previous book` n'est relie a rien.** Il porte `executeOnce: true` et
-n'est ajoute que par `.add()`, sans `.to()`. Il vide la table par la connection
-Postgres, ce que la cle Supabase ne peut pas faire.
+Le mode du noeud d'appel est **absent du JSON**, et c'est sans consequence : le
+code teste `mode === 'each'` et tout le reste suit la branche « une fois pour
+tous les items ». En `each`, le workflow serait relance une fois par passage,
+donc autant de sous-executions que de passages, chacune avec son propre appel
+Gemini.
 
 ## Chainage
 
@@ -251,7 +251,8 @@ Postgres, ce que la cle Supabase ne peut pas faire.
 Noeud Code, mode *Run Once for All Items*. Le texte vient de `item.json.text`.
 Le decoupage se fait **par page**, pas sur le livre entier : le motif
 `[Source page N]` emis par `Extract from File` delimite les pages, chacune est
-nettoyee puis decoupee, et chaque passage emporte sa metadonnee.
+nettoyee puis decoupee, et chaque passage emporte sa metadonnee (`source_page`,
+`chunk_index`, `estimated_tokens`, `document`).
 
 ```js
 CHUNK_SIZE = 800       // tokens, convertis en mots par / 1.3
@@ -259,62 +260,100 @@ CHUNK_OVERLAP = 150
 ```
 
 Le nettoyage recolle les mots coupes en fin de ligne (`/(\w)-\n(\w)/`), ce qui
-materiellement change le texte indexe. Metadonnee par passage : `source_page`,
-`chunk_index`, `estimated_tokens`, `document`.
+materiellement change le texte indexe.
 
 ### Limit
 
-`maxItems: 4`. Quatre passages seulement sont envoyes a l'indexation, quel que
+`maxItems: 10`. Dix passages seulement sont envoyes a l'indexation, quel que
 soit le nombre produit par le chunker. La note du noeud mentionne un plafond de
 100 passages : ce n'est pas la valeur du parametre.
 
 ### Embed the chunks
 
-Un appel `batchEmbedContents` pour tous les passages, pas un appel par passage.
-Mesure a 87 passages et 1,76 million de caracteres en environ 3 secondes, 87
-vecteurs de 3072 dimensions renvoyes dans l'ordre d'envoi.
+Un appel `embedContent` **par passage**, pas un appel de lot. Le noeud HTTP
+applique par defaut un lot de 50 items (`options.batching.batch.batchSize`) et
+renvoie alors **un seul** item contenant tout le tableau de vecteurs, donc une
+seule ligne en base. Le parametre est mis a 1.
 
-L'expression `jsonBody` verifie avant d'appeler qu'aucun item n'arrive sans
-`text` exploitable, et leve une erreur nommant le noeud a lancer. C'est le seul
-endroit ou une indexation vide est detectee : n8n traite l'insertion de zero
-document comme un succes.
+Consequence : indexer N passages coute N appels Gemini. C'est le prix du choix
+« aucun noeud Code pour apparier texte et vecteur ». Le palier gratuit autorise
+100 requetes d'embedding par minute et par projet : avec `Limit: 10` la marge est
+large, mais remettre `Limit` a 100 renvoie un 429.
 
-### Pair texts and vectors
-
-Le retour de Gemini est un seul item contenant un tableau `embeddings`. Ce noeud
-le zippe sur les passages un par un, pour que `Store in Supabase` reçoive une
-ligne par chunk avec son `text` et son `embedding`. Il echoue bruyamment si les
-deux comptes different.
+L'expression `jsonBody` verifie avant d'appeler que l'item porte un `text` non
+vide, et leve une erreur nommant le noeud a lancer. Ce controle existe parce
+que ce noeud ne recoit ses items que du noeud d'appel : lance seul depuis le
+canvas, il recoit `{}`, et Gemini repondait
+`BatchEmbedContentsRequest.requests[0].content.parts[0].data: required oneof field 'data' must have one initialized field`,
+qui ne dit rien de la cause reelle.
 
 ### Store in Supabase
 
 Insertion via l'API REST, table `livres`, champs `text` et `embedding`. Le noeud
-insere bien tous les items, mesures : 3 items en entrée donnent 3 lignes en
-sortie. Aucune boucle n'est necessaire malgre l'absence d'operation `bulk`.
+insere tous les items, mesures : 3 items en entree donnent 3 lignes en sortie.
+
+Le noeud HTTP **remplace** l'item par sa reponse, donc le texte du passage
+n'est plus porte par l'item. Il est relu par reference au declencheur :
+
+```
+text      = {{ $('When Executed by Another Workflow').item.json.text }}
+embedding = {{ $json.embedding.values }}
+```
+
+Sans ce releve, `embedding` part a `null` et l'insertion echoue sur la
+contrainte `NOT NULL`. C'est exactement l'erreur rencontree apres la suppression
+du noeud d'appariement.
 
 ### La chaine de question
 
-`Read the question` lit `question` ou `chatInput` selon l'origine. C'est ce qui
-permet d'utiliser le workflow depuis le chat et depuis un appel externe sans le
-dupliquer.
+`Find relevant passages` porte l'appel a `match_livres` directement dans son
+parametre `query` :
 
-`Build the search` transforme le vecteur en appel SQL. Le litteral est construit
-dans ce noeud plutot qu'inline dans le noeud Postgres, pour que les 3072 nombres
-soient cites une seule fois. Le noeud HTTP renvoie le corps Gemini brut, donc
-le vecteur est a `embedding.values`, avec un repli si le noeud vient a renvoyer
-un tableau nu.
+```
+{{ "select text, distance from match_livres('" + JSON.stringify($json.embedding.values) + "'::vector, 6);" }}
+```
 
-`Draft the answer` construit le prompt a partir des seuls passages renvoyes. Le
-cas « aucun passage » passe par le **meme** noeud de reponse plutot que d'appeler
-le modele avec un prompt vide : il n'y a donc qu'un chemin pour toutes les
-reponses affichees dans le panneau.
+Le champ `query` du noeud Postgres **n'accepte pas les expressions** : le
+prefixe `=` y est tolere mais n8n le retire et leve un avertissement, la valeur
+reste en `{{ }}`.
 
-`Ask Gemini` : `models/gemini-3.5-flash-lite`, `temperature: 0.2`.
-`gemini-3.1-flash-lite` repondait 503 sur ce compte.
-`simplify` est desactive volontairement : active, le noeud renvoie un item par
-candidat, forme `{ content: ... }`, alors que `Reply in chat` lit
-`j.candidates[0].content.parts[0].text`. La temperature se trouve dans
-`options`, c'est la que ce noeud conserve `generationConfig.temperature`.
+Le noeud est en `alwaysOutputData`. Sans cela, une table vide faisait echouer
+toute la chaine en silence et le panneau de chat repondait « Failed to receive
+response ». Avec le filtre de `Draft the answer`, il repond a la place « le livre
+n'est pas encore indexe ».
+
+`Draft the answer` construit le prompt **par blocs**, un en-tete en majuscules
+par section, plus un separateur par passage :
+
+```
+CONTEXTE
+REGLEES
+PASSAGES (6)
+--- Passage 1 ---
+...
+QUESTION
+FORMAT DE REPONSE
+```
+
+Les separateurs evitent que le modele prenne la fin d'un passage pour une
+consigne. Les lignes sans `text` sont filtrees : sinon l'item vide produit par
+`alwaysOutputData` passerait pour un passage et le modele repondrait sur un
+contexte vide.
+
+`Ask Gemini` est le noeud **Google Gemini**
+(`@n8n/n8n-nodes-langchain.googleGemini`), ressource `text`, operation
+`message`, `models/gemini-3.5-flash-lite`, `temperature: 0.2` dans `options` —
+c'est la que ce noeud conserve `generationConfig.temperature`. `simplify` est
+desactive volontairement : active, le noeud renvoie un item par candidat, de
+forme `{ content: ... }`, et non la reponse complete. `jsonOutput` est ecrit en
+toutes lettres a `false`.
+
+`Answer for the chat` est un noeud **Edit Fields** avec une seule affectation.
+Il n'est pas decoratif : le panneau de chat rend le champ nomme `output`, et
+Gemini nomme ses propres champs sans parametre pour les changer. Le noeud recopie
+donc le texte de la reponse dans ce seul champ, verifie en execution :
+`candidates`, `usageMetadata` et `modelVersion` ont disparu de la sortie. C'est
+declaratif, pas du code.
 
 ## Base de donnees
 
@@ -339,20 +378,16 @@ RLS active : le role `anon` peut inserer dans `livres`, et rien d'autre. La cle
 Supabase n'expose donc ni lecture ni vidage par l'API. `Clear previous book` passe
 par la connection Postgres pour vider.
 
-`Clear previous book` execute trois instructions :
-
-```sql
-delete from livres;
-delete from n8n_vector_collections;
-select 1 as cleared;
-```
-
-Le `select 1` final est necessaire : un `DELETE` ne renvoie aucune ligne, et le
-noeud doit produire un item.
+**`Clear previous book` n'est relie a rien et ne s'execute donc jamais.** C'est
+le defaut connu de ce workflow : la table n'est jamais videe entre deux depots,
+donc un nouveau livre s'ajoute au precedent. Le remedy tient en deux edits : le
+poser en tete de l'entree 2, et faire lire les passages par
+`$('When Executed by Another Workflow')` dans le noeud HTTP, puisque le Postgres
+remplace son entree par le resultat de sa requete.
 
 ## Credentials
 
-Toutes trois creees dans l'interface n8n, jamais versionnees :
+Toutes creees dans l'interface n8n, jamais versionnees :
 
 | Noeuds | Type de credential |
 | --- | --- |
@@ -362,6 +397,7 @@ Toutes trois creees dans l'interface n8n, jamais versionnees :
 
 Les deux noeuds HTTP utilisent `predefinedCredentialType` avec `googlePalmApi` :
 la cle part dans l'en-tete que n8n construit, il n'y a pas de header a saisir.
+Le noeud Google Gemini consomme la meme credential.
 
 ## Modeles
 
@@ -372,28 +408,45 @@ la cle part dans l'en-tete que n8n construit, il n'y a pas de header a saisir.
 
 ## Points non evidants, verifies en execution
 
-- **Un noeud Postgres remplace son entree par le resultat de sa requete.** Pose
-  au milieu d'une chaine, il detruit les items qu'il recoit. D'ou les noeuds en
-  aval qui lisent les passages par nom.
+- **`When Executed by Another Workflow` doit declarer son mode d'entree.** Le
+  parametre `workflowInputs` porte `minItems: 1` et `inputSource` vaut par
+  defaut `workflowInputs` : sans valeur ecrite, chaque execution du noeud d'appel
+  echouait sur `At least 1 field is required`. Il est a `passthrough`
+  (« Accept All Data »), le mode qu'attend un appelant qui ne mappe aucun champ.
+- **Une sous-execution ne voit pas les noeuds de l'appelant.** `$('Limit')` leve
+  `Node 'Limit' hasn't been executed` : c'est un autre espace d'execution. Seul
+  l'input du declencheur transporte les donnees.
+- **`Execute Sub-workflow` en mode `each` relance le workflow par item.** Avec
+  87 passages cela fait 87 sous-executions et 87 appels Gemini, de quoi saturer le
+  palier gratuit en une minute.
+- **Un noeud Postgres remplace son entree par le resultat de sa requete.** Pose au
+  milieu d'une chaine, il detruit les items qu'il recoit. D'ou les noeuds en aval
+  qui lisent les passages par nom.
 - **Un noeud Postgres ne peut pas etre place apres l'insertion** sans effacer ce
-  qu'on vient d'ecrire : la table se doublerait a chaque nouveau livre. Il
-  nettoie donc avant.
+  qu'on vient d'ecrire : la table se doublerait a chaque nouveau livre.
+- **Un noeud HTTP Request applique un lot de 50 items par defaut** et renvoie
+  alors **un seul** item pour tout le lot. C'est ce qui rendait l'insertion
+  impossible sans etape d'appariement.
+- **Le panneau de chat rend le champ nomme `output`**, et rien d'autre. Un
+  dernier noeud qui ne le produit pas affiche soit rien, soit le JSON brut.
+- **Un noeud desactive laisse passer son entree telle quelle.** C'est ainsi qu'un
+  JSON Gemini entier s'est affiche dans le chat, `candidates` et `usageMetadata`
+  compris : le noeud charge de nommer le texte etait desactive, et le modele
+  n'avait rien a voir la-dedans.
 - **Les credentials sont retirees quand un noeud est copie** dans un autre
   workflow, y compris par une operation `addNode` qui les contient deja. Elles se
-  rattachent ensuite avec `setNodeCredential`. Les noeuds HTTP sont les plus
-  discrets : ils s'executent quand meme, ils n'envoient seulement aucune cle.
-- **Un groupe de noeuds ne peut pas contenir un declencheur**, et doit former un
-  sous-graphe connexe avec une seule entree et une seule sortie. Les trois
-  entrees de ce workflow ne convergent nulle part : c'est deliberement evite.
+  rattachent ensuite avec `setNodeCredential`.
 - **`jsonBody` doit renvoyer du texte JSON**, via `JSON.stringify`. Renvoyer un
   objet litteral produit une requete malformee.
 - **`embedding` est NOT NULL sans valeur par defaut.** Une insertion sans
   vecteur echoue.
-- **`Limit` n'a qu'une seule entree** : c'est un noeud `limit`, pas un Merge. Il
-  ne peut pas attendre une seconde branche.
-- **`gemini-embedding-001` et `gemini-embedding-2` ont des espaces
-  incompatibles** entre eux. Les deux noeuds d'embeddings doivent porter le meme
-  modele, sinon les vecteurs ne sont pas comparables.
+- **Les limites de la Gemini API sont mesurees par projet, pas par cle**, et par
+  minute. Une saturation se resorbe seule en une minute, sans rien changer.
+- **L'editeur n8n peut ecraser un travail ecrit par API.** Son autosave reecrit le
+  workflow entier depuis l'onglet ouvert : selectionner un noeud et appuyer sur
+  `Suppr` le supprime, sur `Espace` le desactive. En une journee cela a efface
+  trois noeuds Code, vide deux parametres et desactive `Reply in chat`. Fermer
+  l'onglet avant toute ecriture par API.
 - **MCP n'expose aucun outil d'ecriture sur les credentials** (`list_credentials`
   existe, pas de create ni update). L'API REST n8n n'accepte pas non plus le
   bearer du MCP.
@@ -467,10 +520,19 @@ n8ncli status        # ecarts entre le local et le distant
   workflows du meme depot. Compter un travail de re-rattachement apres toute
   operation de ce type.
 - **`n8ncli validate` signale deux points sur Livre_Sport**, sans les corriger :
-  `Clear previous book` n'est connecte a aucune entree (c'est voulu, voir la
-  section 2) et le parametre `query` de `Find relevant passages` contient
-  `{{ $json.sql }}` sans prefixe `=`. Les expressions n8n doivent normalement
-  s'ecrire `={{ $json.sql }}`. Ce point n'a pas ete verifie en execution.
+  `Clear previous book` n'est connecte a aucune entree, ce qui est un defaut et non
+  un choix, et le parametre `query` de `Find relevant passages` porte une
+  expression sans prefixe `=`. Les deux sont repris dans la section 2 ; le second
+  est le comportement attendu, le champ n'acceptant pas les expressions.
+- **`n8ncli validate` refuse une version de noeud hors de l'instance.** creer un
+  noeud sur une version ancienne, par exemple `n8n-nodes-base.set` en 3.4 quand
+  l'instance ne porte que 3.5, produit `is using version 3.4, but the latest
+  version is 3.5`. Aucune operation ne change la version d'un noeud en place : il
+  faut le remplacer par un noeud du meme nom et recabler.
+- **`publish_workflow` echoue si l'onglet est ouvert dans l'editeur** :
+  `Cannot modify workflow while it is being edited by a user in the editor.` Le
+  brouillon et la version publiee divergent alors, et le test manuel utilise le
+  brouillon pendant que l'URL de production utilise la version publiee.
 
 ## Arborescence
 
@@ -503,5 +565,6 @@ credential, pas les cles.
 - veille : davantage d'indicateurs statistiques, alertes sur les variations de
   prix, analyses plus poussees, a condition de rester ancrees aux donnees
   collectees ;
-- Livre_Sport : pages multiples, historique de livres plutot qu'une collection
-  videe a chaque depot.
+- Livre_Sport : cabler `Clear previous book`, seul obstacle a un index propre,
+  puis elargir `Limit` au-dela de 10 passages en gardant le cout sous le plafond
+  de 100 requetes d'embedding par minute ;

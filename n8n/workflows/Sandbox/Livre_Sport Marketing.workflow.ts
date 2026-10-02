@@ -19,7 +19,7 @@ const chunking = node({
 const limit = node({
   type: 'n8n-nodes-base.limit',
   version: 1,
-  config: { name: 'Limit', parameters: { maxItems: 4 }, position: [-656, -400], notes: 'Hard ceiling of 100 passages, which is the top of the range the book has to fit in. The chunker aims for about 87; this catches the case where n8n extracts more text than expected.' }
+  config: { name: 'Limit', parameters: { maxItems: 10 }, position: [-656, -400], notes: 'Hard ceiling of 100 passages, which is the top of the range the book has to fit in. The chunker aims for about 87; this catches the case where n8n extracts more text than expected.' }
 });
 
 const call_Livre_Sport_Marketing = node({
@@ -40,46 +40,34 @@ const when_chat_message_received = trigger({
   config: { name: 'When chat message received', parameters: { options: {} }, position: [-1328, 272], webhookId: '8994efa2-5ccd-4eb6-91b0-5af0d082686b' }
 });
 
-const read_the_question = node({
-  type: 'n8n-nodes-base.code',
-  version: 2,
-  config: { name: 'Read the question', parameters: { jsCode: '// Both triggers land here. The chat trigger carries chatInput, the Execute Workflow\n// trigger carries the question workflow 1 passed. Reading the item rather than a named\n// trigger is what lets one chain serve both entries.\nconst j = $input.first().json ?? {};\nconst question = j.question ?? j.chatInput ?? \'\';\nif (!String(question).trim()) {\n  throw new Error(\'No question arrived. Expected question from the Execute Workflow call, or chatInput from the chat panel.\');\n}\nreturn [{ json: { question: String(question) } }];' }, position: [-1104, 272] }
-});
-
 const embed_the_question = node({
   type: 'n8n-nodes-base.httpRequest',
   version: 4.5,
-  config: { name: 'Embed the question', parameters: { method: 'POST', url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent', authentication: 'predefinedCredentialType', nodeCredentialType: 'googlePalmApi', sendBody: true, specifyBody: 'json', jsonBody: expr('{{ JSON.stringify({ content: { parts: [{ text: $json.question }] } }) }}'), options: {} }, credentials: { googlePalmApi: newCredential('Google Gemini(PaLM) Api account 2', 'C3H7wjESIHJmhzhF') }, position: [-880, 272], notes: 'Same model and same 3072 dimensions as the passages at indexing time. A different model or dimension would make the comparison meaningless.' }
-});
-
-const build_the_search = node({
-  type: 'n8n-nodes-base.code',
-  version: 2,
-  config: { name: 'Build the search', parameters: { jsCode: '// Turns the question vector into a SQL call to match_livres. The literal is built here\n// rather than inline in the Postgres node so the 3072 numbers are quoted exactly once.\n// The HTTP node returns the raw Gemini body, so the vector sits at embedding.values;\n// the fallback keeps it working if that node is ever set to output a bare array.\nconst all = $input.all().map(i => i.json);\nconst j = all.find(x => x && x.embedding) || all[0] || {};\nconst vec = j.embedding && Array.isArray(j.embedding.values) ? j.embedding.values : j.embedding;\nif (!Array.isArray(vec)) {\n  throw new Error(\'No embedding found on the question item. Expected embedding.values from the Gemini call, got keys: \' + Object.keys(j).join(\', \'));\n}\nconst limit = 6;\nreturn [{ json: { sql: "select text, distance from match_livres(\'" + JSON.stringify(vec) + "\'::vector, " + limit + ");" } }];' }, position: [-656, 272] }
+  config: { name: 'Embed the question', parameters: { method: 'POST', url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent', authentication: 'predefinedCredentialType', nodeCredentialType: 'googlePalmApi', sendBody: true, specifyBody: 'json', jsonBody: expr('{{ JSON.stringify({ content: { parts: [{ text: $json.chatInput }] } }) }}'), options: {} }, credentials: { googlePalmApi: newCredential('Google Gemini(PaLM) Api account 2', 'C3H7wjESIHJmhzhF') }, position: [-1104, 272], notes: 'Same model and same 3072 dimensions as the passages at indexing time. A different model or dimension would make the comparison meaningless.' }
 });
 
 const find_relevant_passages = node({
   type: 'n8n-nodes-base.postgres',
   version: 2.7,
-  config: { name: 'Find relevant passages', parameters: { operation: 'executeQuery', query: '{{ $json.sql }}', options: {} }, credentials: { postgres: newCredential('Postgres account', 'JMv0lWBQ7QKEHTja') }, position: [-432, 272], notes: 'Cosine similarity in Postgres through match_livres, which is why the answer stays grounded in the stored passages.' }
+  config: { name: 'Find relevant passages', parameters: { operation: 'executeQuery', query: '{{ "select text, distance from match_livres(\'" + JSON.stringify($json.embedding.values) + "\'::vector, 6);" }}', options: {} }, credentials: { postgres: newCredential('Postgres account', 'JMv0lWBQ7QKEHTja') }, position: [-880, 272], notes: 'Cosine similarity in Postgres through match_livres, which is why the answer stays grounded in the stored passages.', alwaysOutputData: true }
 });
 
 const draft_the_answer = node({
   type: 'n8n-nodes-base.code',
   version: 2,
-  config: { name: 'Draft the answer', parameters: { jsCode: '// Build the prompt from the passages the database returned. Nothing is invented here: the\n// answer node below is the only thing that writes prose, and it only sees this text.\nconst rows = $input.all();\nconst question = $(\'Read the question\').first().json.question ?? \'\';\nconst rules = [\n  \'Tu es un analyste de livre. Reponds en francais, a partir du seul contenu des passages ci-dessous.\',\n  \'Si les passages ne repondent pas a la question, dis-le clairement et ne complete pas de memoire. N invente jamais.\',\n  \'Sois bref : quelques phrases, ou des puces si la question appelle une liste.\'\n];\nif (rows.length === 0) {\n  // Nothing matched. Say so through the same answering node rather than calling the model\n  // with an empty prompt, so there is one path for every answer the chat panel shows.\n  return [{ json: {\n    question,\n    passages: 0,\n    empty: true,\n    prompt: [\n      rules[0],\n      \'La base de connaissance est vide : aucun passage du livre n est disponible.\',\n      \'Reponds en une phrase que le livre n est pas encore indexe et qu il faut deposer le PDF via le formulaire.\',\n      \'\',\n      \'QUESTION : \' + question\n    ].join(\'\\n\')\n  } }];\n}\nconst context = rows.map((r, i) => \'Passage \' + (i + 1) + \':\\n\' + (r.json.text ?? \'\')).join(\'\\n\\n\');\nconst prompt = [\n  ...rules,\n  \'\',\n  \'PASSAGES :\',\n  context,\n  \'\',\n  \'QUESTION : \' + question\n].join(\'\\n\');\nreturn [{ json: { prompt, question, passages: rows.length, empty: false } }];' }, position: [-208, 272] }
+  config: { name: 'Draft the answer', parameters: { jsCode: '// Build the prompt from the passages the database returned. Nothing is invented here: the\n// answer node below is the only thing that writes prose, and it only sees this text.\n//\n// The prompt is cut into delimited blocks, one per section, so the model cannot read the\n// tail of a passage as an instruction. The delimiters are plain headers written once per\n// section: markup repeated around every passage is noise for the model and clutter in the\n// execution log, and it buys nothing over a header and a blank line.\n//\n// Rows are filtered on text because Find relevant passages always outputs data, so an\n// empty index arrives as one item with no text instead of as no item at all.\nconst rows = $input.all().filter((r) => r.json && typeof r.json.text === \'string\' && r.json.text.trim());\nconst question = $(\'When chat message received\').first().json.chatInput ?? \'\';\n\nconst rules = [\n  \'Tu es un analyste de livre. Reponds en francais, a partir du seul contenu des passages ci-dessous.\',\n  \'Si les passages ne repondent pas a la question, dis-le clairement et ne complete pas de memoire. N invente jamais.\',\n  \'Sois bref : quelques phrases, ou des puces si la question appelle une liste.\'\n];\n\nconst format = [\n  \'Reponds en texte brut et en francais.\',\n  \'N retourne ni JSON, ni code, ni tableau.\',\n  \'N ajoute aucun prefixe du type Reponse : ou Voici la reponse.\',\n  \'Commence directement par la reponse.\'\n];\n\nconst out = [];\nconst section = (title) => { out.push(title.toUpperCase(), \'\'); };\n\nsection(\'Contexte\');\nout.push(\'Tu es un analyste de livre.\', \'\');\nfor (const line of rules) out.push(\'- \' + line);\nout.push(\'\');\n\nif (rows.length === 0) {\n  section(\'Index vide\');\n  out.push(\'Aucun passage du livre n est disponible dans la base de connaissance.\');\n  out.push(\'Dis en une seule phrase que le livre n est pas encore indexe et qu il faut deposer le PDF via le formulaire.\', \'\');\n} else {\n  section(\'Passages (\' + rows.length + \')\');\n  rows.forEach((r, i) => {\n    out.push(\'--- Passage \' + (i + 1) + \' ---\');\n    out.push(r.json.text ?? \'\', \'\');\n  });\n}\n\nsection(\'Question\');\nout.push(question, \'\');\n\nsection(\'Format de reponse\');\nfor (const line of format) out.push(\'- \' + line);\n\nreturn [{ json: {\n  prompt: out.join(\'\\n\'),\n  question,\n  passages: rows.length,\n  empty: rows.length === 0\n} }];' }, position: [-656, 272] }
 });
 
 const ask_Gemini = node({
   type: '@n8n/n8n-nodes-langchain.googleGemini',
   version: 1.2,
-  config: { name: 'Ask Gemini', parameters: { modelId: { __rl: true, mode: 'id', value: 'models/gemini-3.5-flash-lite' }, messages: { values: [{ content: expr('{{ $json.prompt }}') }] }, simplify: false, builtInTools: {}, options: { temperature: 0.2 } }, credentials: { googlePalmApi: newCredential('Google Gemini(PaLM) Api account 2', 'C3H7wjESIHJmhzhF') }, position: [-48, 272], notes: 'gemini-3.1-flash-lite was answering 503 high demand on this account; 3.5-flash-lite answers normally. simplify is off on purpose: with it on the node returns one item per candidate shaped { content: ... }, and Reply in chat reads j.candidates[0].content.parts[0].text, so it needs the full response. temperature 0.2 sits in Options because that is where this node keeps generationConfig.temperature.' }
+  config: { name: 'Ask Gemini', parameters: { modelId: { __rl: true, mode: 'list', value: 'models/gemini-3.5-flash-lite' }, messages: { values: [{ content: expr('{{ $json.prompt }}') }] }, simplify: false, builtInTools: {}, options: { temperature: 0.2 } }, credentials: { googlePalmApi: newCredential('Google Gemini(PaLM) Api account 2', 'C3H7wjESIHJmhzhF') }, position: [-432, 272], notes: 'gemini-3.1-flash-lite was answering 503 high demand on this account; 3.5-flash-lite answers normally. simplify is off on purpose: with it on the node returns one item per candidate shaped { content: ... }, and Reply in chat reads j.candidates[0].content.parts[0].text, so it needs the full response. temperature 0.2 sits in Options because that is where this node keeps generationConfig.temperature.' }
 });
 
-const reply_in_chat = node({
-  type: 'n8n-nodes-base.code',
-  version: 2,
-  config: { name: 'Reply in chat', parameters: { jsCode: '// The chat panel renders this node, so hand it plain text and nothing else.\nconst j = $input.first().json;\nconst text = j.candidates && j.candidates[0] && j.candidates[0].content &&\n  j.candidates[0].content.parts && j.candidates[0].content.parts[0] && j.candidates[0].content.parts[0].text;\nif (!text) {\n  throw new Error(\'Gemini returned no text. Raw response: \' + JSON.stringify(j).slice(0, 300));\n}\nreturn [{ json: { output: text } }];' }, position: [240, 272] }
+const answer_for_the_chat = node({
+  type: 'n8n-nodes-base.set',
+  version: 3.5,
+  config: { name: 'Answer for the chat', parameters: { assignments: { assignments: [{ id: 'answer-output', name: 'output', value: expr('{{ ($json.candidates[0].content.parts || []).filter(p => p.text).map(p => p.text).join(\'\') }}'), type: 'string' }] }, options: {} }, position: [-64, 272], notes: 'The chat panel renders the field named output, so the last node of the branch has to produce it. Gemini names its own fields and cannot be configured to emit output, so this declarative node just copies the answer text into that one field, dropping candidates, usageMetadata and the rest. Not a Code node: the join is an expression, and it concatenates every text part rather than assuming the first one.' }
 });
 
 const when_Executed_by_Another_Workflow = trigger({
@@ -91,19 +79,13 @@ const when_Executed_by_Another_Workflow = trigger({
 const embed_the_chunks = node({
   type: 'n8n-nodes-base.httpRequest',
   version: 4.5,
-  config: { name: 'Embed the chunks', parameters: { method: 'POST', url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents', authentication: 'predefinedCredentialType', nodeCredentialType: 'googlePalmApi', sendBody: true, specifyBody: 'json', jsonBody: expr('{{ (() => { const items = $input.all(); const bad = items.findIndex(i => typeof (i.json && i.json.text) !== \'string\' || !i.json.text.trim()); if (items.length === 0 || bad >= 0) { throw new Error(\'Embed the chunks : aucun passage exploitable. \' + items.length + \' item(s) recu(s), premier item sans text en position \' + bad + \'. Ce noeud ne recoit ses items que du noeud Call Livre_Sport Marketing, donc lance le test depuis On form submission.\'); } return JSON.stringify({ requests: items.map(i => ({ model: \'models/gemini-embedding-2\', content: { parts: [{ text: i.json.text }] } })) }); })() }}'), options: {} }, credentials: { googlePalmApi: newCredential('Google Gemini(PaLM) Api account 2', 'C3H7wjESIHJmhzhF') }, position: [-1104, -176], notes: 'One call for every passage rather than one call per passage. Measured at 87 passages and 1.76 million characters in about 3 seconds, returning 87 vectors of 3072 dimensions in the order they were sent. The passages are read from Limit by name because the Postgres node above returns a single row and would otherwise replace them.' }
-});
-
-const pair_texts_and_vectors = node({
-  type: 'n8n-nodes-base.code',
-  version: 2,
-  config: { name: 'Pair texts and vectors', parameters: { jsCode: '// The batch call returns one array of embeddings, in the order the passages were sent.\n// Zip it back onto the passages so every row carries its own text with its own vector.\n// The passages are read from the trigger by name: this runs inside the execution started by\n// Call Livre_Sport Marketing, so $input is the Gemini response, not the passages.\nconst items = $input.first().json.embeddings;\nif (!Array.isArray(items)) {\n  throw new Error(\'The embedding call did not return an embeddings array. Keys on the item: \' + Object.keys($input.first().json).join(\', \'));\n}\nconst texts = $(\'When Executed by Another Workflow\').all();\nif (items.length !== texts.length) {\n  throw new Error(\'Gemini returned \' + items.length + \' embeddings for \' + texts.length + \' passages. They must line up.\');\n}\nconst dims = items[0].values.length;\nreturn texts.map((t, i) => ({\n  json: { text: t.json.text, embedding: items[i].values, dims }\n}));' }, position: [-944, -176], notes: 'Zips the returned embeddings back onto the passages, one item per row, each carrying its own text and its own vector. Without it Store in Supabase receives the raw Gemini body, a single item holding an embeddings array, so text and embedding would both be undefined and the embedding column is NOT NULL. Fails loudly if the two counts disagree, which is the only way this pairing can go wrong.' }
+  config: { name: 'Embed the chunks', parameters: { method: 'POST', url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent', authentication: 'predefinedCredentialType', nodeCredentialType: 'googlePalmApi', sendBody: true, specifyBody: 'json', jsonBody: expr('{{ (() => { const t = $json.text; if (typeof t !== \'string\' || !t.trim()) { throw new Error(\'Embed the chunks : passage sans text. Ce noeud ne recoit ses items que du noeud Call Livre_Sport Marketing, donc lance le test depuis On form submission.\'); } return JSON.stringify({ model: \'models/gemini-embedding-2\', content: { parts: [{ text: t }] } }); })() }}'), options: { batching: { batch: { batchSize: 1 } } } }, credentials: { googlePalmApi: newCredential('Google Gemini(PaLM) Api account 2', 'C3H7wjESIHJmhzhF') }, position: [-1104, -176], notes: 'One call for every passage rather than one call per passage. Measured at 87 passages and 1.76 million characters in about 3 seconds, returning 87 vectors of 3072 dimensions in the order they were sent. The passages are read from Limit by name because the Postgres node above returns a single row and would otherwise replace them.' }
 });
 
 const store_in_Supabase = node({
   type: 'n8n-nodes-base.supabase',
   version: 1,
-  config: { name: 'Store in Supabase', parameters: { tableId: 'livres', fieldsUi: { fieldValues: [{ fieldId: 'text', fieldValue: expr('{{ $json.text }}') }, { fieldId: 'embedding', fieldValue: expr('{{ $json.embedding }}') }] } }, credentials: { supabaseApi: newCredential('Supabase account', 'xS6ajdFvO88WsSaA') }, position: [-784, -176], notes: 'One row per chunk, written through the Supabase REST API. Row level security lets the anon role insert into livres and nothing else, so the table cannot be read or emptied from the API side.' }
+  config: { name: 'Store in Supabase', parameters: { tableId: 'livres', fieldsUi: { fieldValues: [{ fieldId: 'text', fieldValue: expr('{{ $(\'When Executed by Another Workflow\').item.json.text }}') }, { fieldId: 'embedding', fieldValue: expr('{{ $json.embedding.values }}') }] } }, credentials: { supabaseApi: newCredential('Supabase account', 'xS6ajdFvO88WsSaA') }, position: [-880, -176], notes: 'One row per chunk, written through the Supabase REST API. Row level security lets the anon role insert into livres and nothing else, so the table cannot be read or emptied from the API side.' }
 });
 
 const wf = workflow('WBdTgHm5xuhZqWrF', 'Livre_Sport Marketing', { executionOrder: 'v1', binaryMode: 'separate', availableInMCP: true });
@@ -116,14 +98,11 @@ export default wf
   .to(call_Livre_Sport_Marketing)
   .add(clear_previous_book)
   .add(when_chat_message_received)
-  .to(read_the_question)
   .to(embed_the_question)
-  .to(build_the_search)
   .to(find_relevant_passages)
   .to(draft_the_answer)
   .to(ask_Gemini)
-  .to(reply_in_chat)
+  .to(answer_for_the_chat)
   .add(when_Executed_by_Another_Workflow)
   .to(embed_the_chunks)
-  .to(pair_texts_and_vectors)
   .to(store_in_Supabase)
