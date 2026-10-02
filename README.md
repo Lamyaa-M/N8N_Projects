@@ -13,9 +13,7 @@ et synchronises via
 | Sortie | rapport par e-mail | reponse dans le chat |
 | Store | Data Table n8n | Supabase, Postgres + pgvector |
 | Modeles | OpenAI (analyse) | `gemini-embedding-2`, `gemini-3.5-flash-lite` |
-| Publie | non | non |
 
-**https://lamyaamarzouq.app.n8n.cloud/workflow/WBdTgHm5xuhZqWrF**
 
 Ce qui les distingue : la veille est une chaine lineaire qui collecte et compare,
 le projet Livre_Sport a trois entrees et un noeud qui s'appelle lui-meme. Les deux
